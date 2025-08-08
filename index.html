@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ultimate Brick Breaker</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body {
+            background: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        canvas {
+            background: #000;
+            border: 2px solid white;
+            touch-action: none;
+        }
+
+        .game-info {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            justify-content: space-around;
+            width: 300px;
+            font-size: 18px;
+        }
+
+        #level {
+            margin-right: 20px;
+        }
+
+        #gameCanvas {
+            max-width: 95vw;
+            max-height: 80vh;
+        }
+        
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            background: #0095DD;
+            color: white;
+            border-radius: 5px;
+        }
+        
+        #gameOverScreen {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-info">
+        <div>Level: <span id="level">1</span></div>
+        <div>Score: <span id="score">0</span></div>
+        <div>Lives: <span id="lives">3</span></div>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="controls">
+        <button id="startButton">Start</button>
+        <button id="pauseButton" disabled>Pause</button>
+    </div>
+    
+    <div id="gameOverScreen">
+        <h2>GAME OVER</h2>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <button id="restartButton">Restart</button>
+    </div>
+    
+    <script>
+        // Get the canvas and its context
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Dynamic canvas size for mobile
+        function resizeCanvas() {
+            const desiredWidth = 800;
+            const desiredHeight = 600;
+            const ratio = desiredWidth / desiredHeight;
+            let newWidth = window.innerWidth > desiredWidth ? desiredWidth : window.innerWidth * 0.95;
+            let newHeight = newWidth / ratio;
+            
+            if (newHeight > window.innerHeight * 0.8) {
+                newHeight = window.innerHeight * 0.8;
+                newWidth = newHeight * ratio;
+            }
+            
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+            
+            paddleX = (canvas.width - paddleWidth) / 2;
+            
+            // Re-draw initial state
+            drawBricks();
+            drawBall();
+            drawPaddle();
+        }
+        window.addEventListener('load', resizeCanvas);
+        window.addEventListener('resize', resizeCanvas);
+
+        // Random color generator
+        function getRandomColor() {
+            const letters = "0123456789ABCDEF";
+            let color = "#";
+            for (let i = 0; i < 6; i++) {
+                color += letters[Math.floor(Math.random() * 16)];
+            }
+            return color;
+        }
+
+        const gameColor = getRandomColor();
+
+        // Game state variables
+        let score = 0;
+        let lives = 3;
+        let level = 1;
+        let gameOver = false;
+        let gamePaused = true;
+        let animationFrameId = null;
+
+        // Sound effects
+        // Using a simple tone generator to avoid issues with base64 audio
+        function playBrickSound() {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // value in hertz
+            oscillator.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.05); // Play for 0.05 seconds
+        }
+        
+        function playGameOverSound() {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            oscillator.type = 'triangle';
+            oscillator.frequency.setValueAtTime(100, audioCtx.currentTime);
+            oscillator.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // Ball properties
+        let ballRadius = 10;
+        let x, y, dx, dy;
+
+        // Paddle properties
+        let paddleHeight = 10;
+        let paddleWidth = 75;
+        let paddleX;
+
+        // Brick properties
+        let brickRowCount = 5;
+        let brickColumnCount = 8;
+        let brickWidth;
+        let brickHeight = 20;
+        let brickPadding = 10;
+        let brickOffsetTop = 30;
+        let brickOffsetLeft = 30;
+        let bricks = [];
+
+        // Game setup function for new levels
+        function setupLevel() {
+            brickColumnCount = Math.min(8 + Math.floor(level / 2), 15);
+            brickRowCount = Math.min(5 + Math.floor(level / 5), 10);
+            brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickColumnCount - 1) * brickPadding) / brickColumnCount;
+            
+            x = canvas.width / 2;
+            y = canvas.height - 30;
+            dx = 2 + Math.min(level * 0.1, 5);
+            dy = -(2 + Math.min(level * 0.1, 5));
+            
+            paddleX = (canvas.width - paddleWidth) / 2;
+            
+            bricks = [];
+            for (let c = 0; c < brickColumnCount; c++) {
+                bricks[c] = [];
+                for (let r = 0; r < brickRowCount; r++) {
+                    bricks[c][r] = { x: 0, y: 0, status: 1 };
+                }
+            }
+        }
+        setupLevel();
+
+        // Event listeners for paddle movement
+        let rightPressed = false;
+        let leftPressed = false;
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Right" || e.key === "ArrowRight") {
+                rightPressed = true;
+            } else if (e.key === "Left" || e.key === "ArrowLeft") {
+                leftPressed = true;
+            }
+        });
+
+        document.addEventListener("keyup", (e) => {
+            if (e.key === "Right" || e.key === "ArrowRight") {
+                rightPressed = false;
+            } else if (e.key === "Left" || e.key === "ArrowLeft") {
+                leftPressed = false;
+            }
+        });
+
+        // Touch control for mobile
+        document.addEventListener('touchstart', touchMoveHandler, false);
+        document.addEventListener('touchmove', touchMoveHandler, false);
+
+        function touchMoveHandler(e) {
+            if (gamePaused || gameOver) return;
+            e.preventDefault();
+            const relativeX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+            if (relativeX > 0 && relativeX < canvas.width) {
+                paddleX = relativeX - paddleWidth / 2;
+            }
+        }
+        
+        // Button controls
+        const startButton = document.getElementById("startButton");
+        const pauseButton = document.getElementById("pauseButton");
+        const restartButton = document.getElementById("restartButton");
+        const gameOverScreen = document.getElementById("gameOverScreen");
+        
+        startButton.addEventListener("click", () => {
+            if (gamePaused) {
+                gamePaused = false;
+                startButton.disabled = true;
+                pauseButton.disabled = false;
+                draw();
+            }
+        });
+
+        pauseButton.addEventListener("click", () => {
+            if (!gamePaused) {
+                gamePaused = true;
+                startButton.disabled = false;
+                pauseButton.disabled = true;
+                cancelAnimationFrame(animationFrameId);
+            }
+        });
+
+        restartButton.addEventListener("click", () => {
+            document.location.reload();
+        });
+
+        function collisionDetection() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    let b = bricks[c][r];
+                    if (b.status === 1) {
+                        if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
+                            dy = -dy;
+                            b.status = 0;
+                            score++;
+                            document.getElementById("score").innerText = score;
+                            playBrickSound();
+                            
+                            const remainingBricks = bricks.flat().filter(brick => brick.status === 1).length;
+                            if (remainingBricks === 0) {
+                                if (level < 1000) {
+                                    level++;
+                                    document.getElementById("level").innerText = level;
+                                    setupLevel();
+                                } else {
+                                    alert("YOU HAVE BEATEN ALL 1000 LEVELS! CONGRATULATIONS!");
+                                    document.location.reload();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+            ctx.fillStyle = gameColor;
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.rect(paddleX, canvas.height - paddleHeight, paddleWidth, paddleHeight);
+            ctx.fillStyle = gameColor;
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawBricks() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    if (bricks[c][r].status === 1) {
+                        let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
+                        let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
+                        bricks[c][r].x = brickX;
+                        bricks[c][r].y = brickY;
+                        ctx.beginPath();
+                        ctx.rect(brickX, brickY, brickWidth, brickHeight);
+                        ctx.fillStyle = gameColor;
+                        ctx.fill();
+                        ctx.closePath();
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            if (gamePaused || gameOver) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawBricks();
+            drawBall();
+            drawPaddle();
+            collisionDetection();
+
+            // Ball movement logic
+            if (x + dx > canvas.width - ballRadius || x + dx < ballRadius) {
+                dx = -dx;
+            }
+            if (y + dy < ballRadius) {
+                dy = -dy;
+            } else if (y + dy > canvas.height - ballRadius) {
+                if (x > paddleX && x < paddleX + paddleWidth) {
+                    dy = -dy;
+                } else {
+                    lives--;
+                    document.getElementById("lives").innerText = lives;
+                    if (lives === 0) {
+                        gameOver = true;
+                        playGameOverSound();
+                        gameOverScreen.style.display = 'block';
+                        document.getElementById('finalScore').innerText = score;
+                        pauseButton.disabled = true;
+                        startButton.disabled = true;
+                    } else {
+                        x = canvas.width / 2;
+                        y = canvas.height - 30;
+                        dx = 2 + Math.min(level * 0.1, 5);
+                        dy = -(2 + Math.min(level * 0.1, 5));
+                        paddleX = (canvas.width - paddleWidth) / 2;
+                    }
+                }
+            }
+
+            // Paddle movement logic for keyboard
+            if (rightPressed && paddleX < canvas.width - paddleWidth) {
+                paddleX += 7;
+            } else if (leftPressed && paddleX > 0) {
+                paddleX -= 7;
+            }
+
+            x += dx;
+            y += dy;
+
+            animationFrameId = requestAnimationFrame(draw);
+        }
+
+        // Initial drawing of the game state
+        drawBricks();
+        drawBall();
+        drawPaddle();
+    </script>
+</body>
+</html>
